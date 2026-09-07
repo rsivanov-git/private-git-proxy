@@ -1,0 +1,14 @@
+services:
+  private-git-proxy:
+    image: ghcr.io/rsivanov-git/private-git-proxy:latest
+    restart: unless-stopped
+    environment:
+      GIT_URL: ${GIT_URL:?Set GIT_URL in .env}
+      GIT_TOKEN: ${GIT_TOKEN:?Set GIT_TOKEN in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

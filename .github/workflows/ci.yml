@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm test
+      - name: Validate Docker build
+        run: docker build -t private-git-proxy:ci .
+      - name: Validate Compose
+        env:
+          GIT_URL: https://raw.githubusercontent.com/example/repo/main/file.txt
+          GIT_TOKEN: test-placeholder
+        run: docker compose config --quiet
