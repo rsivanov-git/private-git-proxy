@@ -58,7 +58,7 @@ For a new host without a named Service, standard Tailscale Serve can expose it:
 tailscale serve --bg http://127.0.0.1:8080
 ```
 
-The application has no client authentication: access is controlled by Tailscale.
+Tailnet policy controls access to the service, including its optional fallback token.
 Keep it private with Serve and tailnet policy; do not expose it with Funnel.
 If replacing gist-decrypt, stop the old container before starting this one because
 both examples use host port 8080. No Tailscale identity or SSH changes are needed.
@@ -73,10 +73,19 @@ Authorization: Bearer <GIT_TOKEN>
 Accept: application/vnd.github.raw+json
 ```
 
-**The token is never added to the URL.** HTTPS certificate verification stays
+**The upstream URL never contains the token.** HTTPS certificate verification stays
 enabled. Requests are sent only to the fixed `api.github.com` origin; redirects
 are rejected. The service does not use GitHub's temporary `download_url` links.
-Incoming request headers and query parameters cannot override the source or token.
+For Surge, set the policy group option to
+`policy-path=https://PART1:PART2@proxy-list.siberian-adder.ts.net/`.
+Split one GitHub token into two nonempty parts. The server decodes HTTP Basic
+credentials and concatenates the parts without a separator for this request.
+The profile contains the full secret in recoverable form. Use HTTPS.
+
+With no Authorization header, the server uses the optional GIT_TOKEN from the
+environment. With neither, it returns 401 and a Basic challenge. Malformed or
+unsupported credentials also return 401. A GitHub rejection retains the usual
+502 response and never triggers a retry with the environment token.
 Upstream headers, URLs, error details and tokens are not returned or logged.
 
 Accepted URLs: `https://raw.githubusercontent.com/OWNER/REPO/REF/FILE` and

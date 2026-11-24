@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       GIT_URL: ${GIT_URL:?Set GIT_URL in .env}
-      GIT_TOKEN: ${GIT_TOKEN:?Set GIT_TOKEN in .env}
+      GIT_TOKEN: ${GIT_TOKEN:-}
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true

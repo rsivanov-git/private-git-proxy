@@ -12,10 +12,10 @@ test('raw URLs become fixed-origin API requests without token in URL', () => {
   for (const url of ['http://raw.githubusercontent.com/a/b/main/f', 'https://example.com/a/b/main/f', env.GIT_URL+'?token=secret', env.GIT_URL+'#secret', 'https://user:secret@raw.githubusercontent.com/a/b/main/f', 'https://raw.githubusercontent.com/a/b/main', 'https://raw.githubusercontent.com/a/b/main/a%2Fb', 'https://raw.githubusercontent.com/a/b/main/%00']) {
     assert.throws(() => config({ ...env, GIT_URL: url }), e => !e.message.includes('secret'));
   }
-  for (const token of ['', undefined, 'bad\r\nheader', 'a b']) assert.throws(() => config({ ...env, GIT_TOKEN: token }));
+  for (const token of ['bad\r\nheader', 'a b']) assert.throws(() => config({ ...env, GIT_TOKEN: token }));
 });
-async function serve(t, fetchImpl, timeoutMs = 15000) {
-  const app = createApp(config(env), { fetchImpl, timeoutMs });
+async function serve(t, fetchImpl, timeoutMs = 15000, environment = env) {
+  const app = createApp(config(environment), { fetchImpl, timeoutMs });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   t.after(() => new Promise(resolve => { app.close(resolve); app.closeAllConnections(); }));
   return `http://127.0.0.1:${app.address().port}`;
@@ -30,7 +30,7 @@ test('each root request fetches fresh bytes; token only in upstream header', asy
     return new Response(Buffer.from([0, 255, ++count]), { headers: { 'X-Secret': env.GIT_TOKEN } });
   });
   for (let i = 1; i <= 2; i++) {
-    const res = await fetch(url+'/', { headers: { Authorization: 'untrusted', 'If-None-Match': '*' } });
+    const res = await fetch(url+'/', { headers: { 'If-None-Match': '*' } });
     assert.equal(res.status, 200); assert.equal(res.headers.get('cache-control'), 'no-store');
     assert.equal(res.headers.get('x-secret'), null); assert.equal(res.headers.get('content-disposition'), null);
     assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from([0, 255, i]));
@@ -58,4 +58,24 @@ test('empty file is returned successfully', async t => {
 test('timeout aborts upstream', async t => {
   const url = await serve(t, (_, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once:true })), 20);
   assert.equal((await fetch(url+'/')).status,502);
+});
+
+test('request tokens are isolated and take precedence over the optional fallback', async t => {
+  for (const fallback of [env.GIT_TOKEN, undefined, '']) {
+    const seen = [];
+    const url = await serve(t, async (_, options) => {
+      seen.push(options.headers.Authorization);
+      return new Response('file', { status: seen.at(-1) === 'Bearer badtoken' ? 403 : 200 });
+    }, 15000, { ...env, GIT_TOKEN: fallback });
+    const basic = value => 'Basic ' + Buffer.from(value).toString('base64');
+    const get = authorization => fetch(url, { headers: { Authorization: authorization } });
+    for (const invalid of ['Basic !!!', basic('missing'), basic(':pass'), basic('user:'), 'Bearer other']) {
+      assert.equal((await get(invalid)).status, 401);
+    }
+    assert.deepEqual(seen, []);
+    assert.equal((await get(basic('github_pat_:client'))).status, 200);
+    assert.equal((await get(basic('bad:token'))).status, 502);
+    assert.equal((await fetch(url)).status, fallback ? 200 : 401);
+    assert.deepEqual(seen, ['Bearer github_pat_client', 'Bearer badtoken', ...(fallback ? ['Bearer ' + fallback] : [])]);
+  }
 });

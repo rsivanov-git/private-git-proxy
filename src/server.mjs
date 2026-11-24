@@ -17,8 +17,17 @@ export function config(env = process.env) {
     apiUrl = new URL(`https://api.github.com/repos/${owner}/${repo}/contents/${file.map(encodeURIComponent).join('/')}`);
     apiUrl.searchParams.set('ref', ref);
   } catch { throw new Error('GIT_URL must be an HTTPS raw.githubusercontent.com/OWNER/REPO/REF/FILE URL without credentials, query or fragment.'); }
-  if (typeof env.GIT_TOKEN !== 'string' || !/^[A-Za-z0-9_]+$/.test(env.GIT_TOKEN)) throw new Error('GIT_TOKEN must be a nonempty GitHub access token.');
+  if (env.GIT_TOKEN && !/^[A-Za-z0-9_]+$/.test(env.GIT_TOKEN)) throw new Error('GIT_TOKEN must be a nonempty GitHub access token.');
   return { url: apiUrl.href, token: env.GIT_TOKEN };
+}
+function requestToken(authorization, fallback) {
+  if (authorization === undefined) return fallback;
+  const match = /^Basic +([A-Za-z0-9+/]+={0,2})$/i.exec(authorization);
+  if (!match) return;
+  const bytes = Buffer.from(match[1], 'base64');
+  if (bytes.toString('base64') !== match[1]) return;
+  const parts = /^([A-Za-z0-9_]+):([A-Za-z0-9_]+)$/.exec(bytes.toString('latin1'));
+  if (parts) return parts[1] + parts[2];
 }
 export function createApp(settings, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   return createServer(async (req, res) => {
@@ -30,6 +39,12 @@ export function createApp(settings, { fetchImpl = fetch, timeoutMs = 15000 } = {
     if (req.method !== 'GET') { res.setHeader('Allow', 'GET'); reply(405, 'Method not allowed\n'); return; }
     if (req.url === '/healthz') { reply(200, 'ok\n'); return; }
     if (req.url !== '/') { reply(404, 'Not found\n'); return; }
+    const token = requestToken(req.headers.authorization, settings.token);
+    if (!token) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="proxy-list"');
+      reply(401, 'GitHub credentials required\n');
+      return;
+    }
     const controller = new AbortController();
     const disconnect = () => { if (!res.writableEnded) controller.abort(); };
     res.on('close', disconnect);
@@ -37,7 +52,7 @@ export function createApp(settings, { fetchImpl = fetch, timeoutMs = 15000 } = {
     try {
       const upstream = await fetchImpl(settings.url, {
         redirect: 'error', cache: 'no-store', signal,
-        headers: { Authorization: `Bearer ${settings.token}`, Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'private-git-proxy', 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' },
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'private-git-proxy', 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' },
       });
       if (upstream.status !== 200 || !upstream.body) throw new Error('Upstream failure');
       const chunks = []; let size = 0;
